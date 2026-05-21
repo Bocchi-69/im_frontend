@@ -1,7 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { isAuthenticated, logout, getMe } from "@/lib/authService";
+import { candidateApi, CandidateProfile } from "@/lib/candidateApi";
 
 const NAV_ITEMS = [
   {
@@ -67,16 +70,197 @@ const MESSAGES = [
 ];
 
 export default function CandidateDashboard() {
+  const router = useRouter();
+  
+  // ──────────────────────────────────────────────────────────────────────────
+  // NEW: State for user data and profile data
+  // ──────────────────────────────────────────────────────────────────────────
+  const [user, setUser] = useState<any>(null);
+  const [profile, setProfile] = useState<CandidateProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // NEW: State for profile form
+  // ──────────────────────────────────────────────────────────────────────────
+  const [profileForm, setProfileForm] = useState({
+    job_title: "",
+    location: "",
+    expected_pay: "",
+    bio: "",
+  });
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileMessage, setProfileMessage] = useState("");
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // NEW: State for resume upload
+  // ──────────────────────────────────────────────────────────────────────────
+  const [uploadingResume, setUploadingResume] = useState(false);
+  const [resumeMessage, setResumeMessage] = useState("");
+
   const [activeTab, setActiveTab] = useState("overview");
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [resumeUploaded, setResumeUploaded] = useState(false);
   const [dragging, setDragging] = useState(false);
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // NEW: Load user data and profile on mount
+  // ──────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!isAuthenticated()) {
+      router.replace("/login");
+      return;
+    }
+
+    const fetchData = async () => {
+      try {
+        // Fetch user data
+        const userData = await getMe();
+        setUser(userData.user);
+
+        // Fetch profile data
+        const profileData = await candidateApi.getProfile();
+        setProfile(profileData.profile);
+
+        // Populate form with existing profile data
+        setProfileForm({
+          job_title: profileData.profile.job_title || "",
+          location: profileData.profile.location || "",
+          expected_pay: profileData.profile.expected_pay || "",
+          bio: profileData.profile.bio || "",
+        });
+      } catch (error) {
+        console.error("Failed to fetch data:", error);
+        router.replace("/login");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [router]);
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // NEW: Handle logout
+  // ──────────────────────────────────────────────────────────────────────────
+  const handleLogout = async () => {
+    try {
+      await logout();
+      router.push("/login");
+    } catch (error) {
+      console.error("Logout failed:", error);
+      localStorage.removeItem("auth_token");
+      router.push("/login");
+    }
+  };
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // NEW: Handle profile form submission
+  // ──────────────────────────────────────────────────────────────────────────
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingProfile(true);
+    setProfileMessage("");
+
+    try {
+      const result = await candidateApi.updateProfile(profileForm);
+      setProfile(result.profile);
+      setProfileMessage("Profile saved successfully!");
+      
+      // Clear success message after 3 seconds
+      setTimeout(() => setProfileMessage(""), 3000);
+    } catch (error: any) {
+      setProfileMessage(error.response?.data?.message || "Failed to save profile");
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // NEW: Handle resume file upload
+  // ──────────────────────────────────────────────────────────────────────────
+  const handleFileUpload = async (file: File) => {
+    if (!file) return;
+
+    // Validate file type
+    const allowedTypes = ["application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
+    if (!allowedTypes.includes(file.type)) {
+      setResumeMessage("Please upload a PDF or Word document");
+      return;
+    }
+
+    // Validate file size (5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      setResumeMessage("File size must be less than 5MB");
+      return;
+    }
+
+    setUploadingResume(true);
+    setResumeMessage("");
+
+    try {
+      const result = await candidateApi.uploadResume(file);
+      
+      // Update profile with new resume path
+      setProfile((prev) => prev ? { ...prev, resume_path: result.resume_path } : null);
+      
+      setResumeMessage("Resume uploaded successfully!");
+      setTimeout(() => setResumeMessage(""), 3000);
+    } catch (error: any) {
+      setResumeMessage(error.response?.data?.message || "Failed to upload resume");
+    } finally {
+      setUploadingResume(false);
+    }
+  };
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // NEW: Handle resume deletion
+  // ──────────────────────────────────────────────────────────────────────────
+  const handleDeleteResume = async () => {
+    if (!confirm("Are you sure you want to delete your resume?")) return;
+
+    setUploadingResume(true);
+    setResumeMessage("");
+
+    try {
+      await candidateApi.deleteResume();
+      
+      // Update profile to remove resume path
+      setProfile((prev) => prev ? { ...prev, resume_path: null } : null);
+      
+      setResumeMessage("Resume deleted successfully");
+      setTimeout(() => setResumeMessage(""), 3000);
+    } catch (error: any) {
+      setResumeMessage(error.response?.data?.message || "Failed to delete resume");
+    } finally {
+      setUploadingResume(false);
+    }
+  };
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // NEW: Handle drag and drop
+  // ──────────────────────────────────────────────────────────────────────────
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragging(false);
-    setResumeUploaded(true);
+    
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      handleFileUpload(file);
+    }
   };
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // NEW: Show loading spinner while fetching data
+  // ──────────────────────────────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#FAFAF8] flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-[#4A6CF7] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-sm text-[#888]">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#FAFAF8] flex flex-col font-sans">
@@ -101,9 +285,9 @@ export default function CandidateDashboard() {
             </svg>
             <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-[#4A6CF7] rounded-full" />
           </button>
-          {/* Avatar */}
+          {/* Avatar - UPDATED to show user initials */}
           <div className="w-8 h-8 rounded-full bg-[#1A1A1A] text-white text-xs font-semibold flex items-center justify-center">
-            JD
+            {user?.name?.split(" ").map((n: string) => n[0]).join("").toUpperCase() || "JD"}
           </div>
         </div>
       </header>
@@ -131,16 +315,17 @@ export default function CandidateDashboard() {
               </button>
             ))}
           </nav>
+          {/* UPDATED: Changed Link to button with handleLogout */}
           <div className="px-3 py-4 border-t border-[#E5E3DC]">
-            <Link
-              href="/login"
+            <button
+              onClick={handleLogout}
               className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-[#888] hover:bg-red-50 hover:text-red-500 transition-all"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
                 <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" />
               </svg>
               Log out
-            </Link>
+            </button>
           </div>
         </aside>
 
@@ -153,7 +338,8 @@ export default function CandidateDashboard() {
           {/* OVERVIEW */}
           {activeTab === "overview" && (
             <div>
-              <h1 className="text-xl font-bold text-[#1A1A1A] mb-1">Good morning, Juan 👋</h1>
+              {/* UPDATED: Show real user name */}
+              <h1 className="text-xl font-bold text-[#1A1A1A] mb-1">Good morning, {user?.name?.split(" ")[0] || "there"} 👋</h1>
               <p className="text-sm text-[#888] mb-8">Here's what's happening with your job search.</p>
 
               {/* Stats */}
@@ -191,16 +377,16 @@ export default function CandidateDashboard() {
                 </div>
               </div>
 
-              {/* Resume status */}
+              {/* Resume status - UPDATED to show real resume status */}
               <div className="bg-white border border-[#E5E3DC] rounded-2xl p-5">
                 <div className="flex items-center justify-between mb-2">
                   <h2 className="text-sm font-semibold text-[#1A1A1A]">Resume Status</h2>
-                  <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${resumeUploaded ? "text-green-700 bg-green-50" : "text-amber-600 bg-amber-50"}`}>
-                    {resumeUploaded ? "Uploaded" : "Missing"}
+                  <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${profile?.resume_path ? "text-green-700 bg-green-50" : "text-amber-600 bg-amber-50"}`}>
+                    {profile?.resume_path ? "Uploaded" : "Missing"}
                   </span>
                 </div>
-                <p className="text-xs text-[#888]">{resumeUploaded ? "Your resume is live and visible to employers." : "Upload your resume to start getting discovered by employers."}</p>
-                {!resumeUploaded && (
+                <p className="text-xs text-[#888]">{profile?.resume_path ? "Your resume is live and visible to employers." : "Upload your resume to start getting discovered by employers."}</p>
+                {!profile?.resume_path && (
                   <button onClick={() => setActiveTab("resume")} className="mt-3 text-xs font-medium text-[#4A6CF7] hover:underline">
                     Upload now →
                   </button>
@@ -209,67 +395,133 @@ export default function CandidateDashboard() {
             </div>
           )}
 
-          {/* PROFILE */}
+          {/* PROFILE - UPDATED with real form handling */}
           {activeTab === "profile" && (
             <div className="max-w-xl">
               <h1 className="text-xl font-bold text-[#1A1A1A] mb-1">My Profile</h1>
               <p className="text-sm text-[#888] mb-8">This is what employers see when they view your profile.</p>
 
-              <div className="bg-white border border-[#E5E3DC] rounded-2xl p-6 flex flex-col gap-5">
+              <form onSubmit={handleSaveProfile} className="bg-white border border-[#E5E3DC] rounded-2xl p-6 flex flex-col gap-5">
                 {/* Avatar */}
                 <div className="flex items-center gap-4">
-                  <div className="w-14 h-14 rounded-full bg-[#1A1A1A] text-white text-lg font-bold flex items-center justify-center">JD</div>
+                  <div className="w-14 h-14 rounded-full bg-[#1A1A1A] text-white text-lg font-bold flex items-center justify-center">
+                    {user?.name?.split(" ").map((n: string) => n[0]).join("").toUpperCase() || "JD"}
+                  </div>
                   <div>
-                    <p className="text-sm font-semibold text-[#1A1A1A]">Juan dela Cruz</p>
-                    <p className="text-xs text-[#888]">Frontend Developer · Cebu, PH</p>
+                    <p className="text-sm font-semibold text-[#1A1A1A]">{user?.name}</p>
+                    <p className="text-xs text-[#888]">{profileForm.job_title || "Add job title"} · {profileForm.location || "Add location"}</p>
                   </div>
                 </div>
 
-                {[
-                  { label: "Full Name", placeholder: "Juan dela Cruz", type: "text" },
-                  { label: "Email", placeholder: "juan@example.com", type: "email" },
-                  { label: "Job Title", placeholder: "e.g. Frontend Developer", type: "text" },
-                  { label: "Location", placeholder: "e.g. Cebu, Philippines", type: "text" },
-                  { label: "Expected Pay (monthly)", placeholder: "e.g. ₱50,000", type: "text" },
-                ].map((f) => (
-                  <div key={f.label} className="flex flex-col gap-1.5">
-                    <label className="text-xs font-medium text-[#444]">{f.label}</label>
-                    <input
-                      type={f.type}
-                      placeholder={f.placeholder}
-                      className="border border-[#CCCBC4] rounded-xl px-4 py-2.5 text-sm text-[#1A1A1A] outline-none focus:border-[#4A6CF7] focus:ring-2 focus:ring-[#4A6CF7]/10 bg-white transition-all placeholder:text-[#BBB]"
-                    />
-                  </div>
-                ))}
+                {/* Full Name (read-only, from user account) */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-[#444]">Full Name</label>
+                  <input
+                    type="text"
+                    value={user?.name || ""}
+                    disabled
+                    className="border border-[#CCCBC4] rounded-xl px-4 py-2.5 text-sm text-[#888] bg-[#F5F4F0] cursor-not-allowed"
+                  />
+                  <p className="text-xs text-[#AAA]">Name can only be changed in account settings</p>
+                </div>
 
+                {/* Email (read-only, from user account) */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-[#444]">Email</label>
+                  <input
+                    type="email"
+                    value={user?.email || ""}
+                    disabled
+                    className="border border-[#CCCBC4] rounded-xl px-4 py-2.5 text-sm text-[#888] bg-[#F5F4F0] cursor-not-allowed"
+                  />
+                </div>
+
+                {/* Job Title */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-[#444]">Job Title</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Frontend Developer"
+                    value={profileForm.job_title}
+                    onChange={(e) => setProfileForm({ ...profileForm, job_title: e.target.value })}
+                    className="border border-[#CCCBC4] rounded-xl px-4 py-2.5 text-sm text-[#1A1A1A] outline-none focus:border-[#4A6CF7] focus:ring-2 focus:ring-[#4A6CF7]/10 bg-white transition-all placeholder:text-[#BBB]"
+                  />
+                </div>
+
+                {/* Location */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-[#444]">Location</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Cebu, Philippines"
+                    value={profileForm.location}
+                    onChange={(e) => setProfileForm({ ...profileForm, location: e.target.value })}
+                    className="border border-[#CCCBC4] rounded-xl px-4 py-2.5 text-sm text-[#1A1A1A] outline-none focus:border-[#4A6CF7] focus:ring-2 focus:ring-[#4A6CF7]/10 bg-white transition-all placeholder:text-[#BBB]"
+                  />
+                </div>
+
+                {/* Expected Pay */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-[#444]">Expected Pay (monthly)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. ₱50,000"
+                    value={profileForm.expected_pay}
+                    onChange={(e) => setProfileForm({ ...profileForm, expected_pay: e.target.value })}
+                    className="border border-[#CCCBC4] rounded-xl px-4 py-2.5 text-sm text-[#1A1A1A] outline-none focus:border-[#4A6CF7] focus:ring-2 focus:ring-[#4A6CF7]/10 bg-white transition-all placeholder:text-[#BBB]"
+                  />
+                </div>
+
+                {/* Bio */}
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-[#444]">Bio</label>
                   <textarea
                     rows={3}
                     placeholder="A short intro about yourself..."
+                    value={profileForm.bio}
+                    onChange={(e) => setProfileForm({ ...profileForm, bio: e.target.value })}
                     className="border border-[#CCCBC4] rounded-xl px-4 py-2.5 text-sm text-[#1A1A1A] outline-none focus:border-[#4A6CF7] focus:ring-2 focus:ring-[#4A6CF7]/10 bg-white transition-all placeholder:text-[#BBB] resize-none"
                   />
                 </div>
 
-                <button className="w-full bg-[#1A1A1A] text-white py-2.5 rounded-xl text-sm font-medium hover:bg-[#333] transition-colors">
-                  Save changes
+                {/* Success/Error message */}
+                {profileMessage && (
+                  <div className={`text-xs rounded-xl px-4 py-3 ${profileMessage.includes("success") ? "bg-green-50 border border-green-200 text-green-600" : "bg-red-50 border border-red-200 text-red-600"}`}>
+                    {profileMessage}
+                  </div>
+                )}
+
+                {/* Submit button */}
+                <button
+                  type="submit"
+                  disabled={savingProfile}
+                  className="w-full bg-[#1A1A1A] text-white py-2.5 rounded-xl text-sm font-medium hover:bg-[#333] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {savingProfile ? "Saving..." : "Save changes"}
                 </button>
-              </div>
+              </form>
             </div>
           )}
 
-          {/* RESUME */}
+          {/* RESUME - UPDATED with real file upload */}
           {activeTab === "resume" && (
             <div className="max-w-xl">
               <h1 className="text-xl font-bold text-[#1A1A1A] mb-1">Resume</h1>
               <p className="text-sm text-[#888] mb-8">Upload your resume to get discovered by employers.</p>
 
-              {!resumeUploaded ? (
+              {/* Success/Error message */}
+              {resumeMessage && (
+                <div className={`mb-4 text-xs rounded-xl px-4 py-3 ${resumeMessage.includes("success") ? "bg-green-50 border border-green-200 text-green-600" : "bg-red-50 border border-red-200 text-red-600"}`}>
+                  {resumeMessage}
+                </div>
+              )}
+
+              {!profile?.resume_path ? (
                 <div
                   onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
                   onDragLeave={() => setDragging(false)}
                   onDrop={handleDrop}
-                  className={`border-2 border-dashed rounded-2xl p-12 flex flex-col items-center justify-center gap-4 transition-all cursor-pointer ${dragging ? "border-[#4A6CF7] bg-[#EEF0FF]" : "border-[#CCCBC4] bg-white hover:border-[#999] hover:bg-[#FAFAF8]"}`}
+                  className={`border-2 border-dashed rounded-2xl p-12 flex flex-col items-center justify-center gap-4 transition-all ${uploadingResume ? "opacity-50 cursor-not-allowed" : "cursor-pointer"} ${dragging ? "border-[#4A6CF7] bg-[#EEF0FF]" : "border-[#CCCBC4] bg-white hover:border-[#999] hover:bg-[#FAFAF8]"}`}
                 >
                   <div className="w-12 h-12 rounded-2xl bg-[#F0EFE8] flex items-center justify-center">
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#555" strokeWidth="1.8" strokeLinecap="round">
@@ -277,12 +529,21 @@ export default function CandidateDashboard() {
                     </svg>
                   </div>
                   <div className="text-center">
-                    <p className="text-sm font-medium text-[#1A1A1A]">Drag & drop your resume here</p>
+                    <p className="text-sm font-medium text-[#1A1A1A]">{uploadingResume ? "Uploading..." : "Drag & drop your resume here"}</p>
                     <p className="text-xs text-[#888] mt-1">PDF or DOCX · Max 5MB</p>
                   </div>
-                  <label className="cursor-pointer bg-[#1A1A1A] text-white px-5 py-2 rounded-full text-xs font-medium hover:bg-[#333] transition-colors">
+                  <label className={`bg-[#1A1A1A] text-white px-5 py-2 rounded-full text-xs font-medium hover:bg-[#333] transition-colors ${uploadingResume ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}>
                     Browse file
-                    <input type="file" accept=".pdf,.docx" className="hidden" onChange={() => setResumeUploaded(true)} />
+                    <input
+                      type="file"
+                      accept=".pdf,.doc,.docx"
+                      className="hidden"
+                      disabled={uploadingResume}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleFileUpload(file);
+                      }}
+                    />
                   </label>
                 </div>
               ) : (
@@ -294,11 +555,17 @@ export default function CandidateDashboard() {
                       </svg>
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-[#1A1A1A]">resume_juan.pdf</p>
-                      <p className="text-xs text-[#888]">Uploaded · Apr 30, 2026</p>
+                      <p className="text-sm font-medium text-[#1A1A1A]">{profile.resume_path.split('/').pop()}</p>
+                      <p className="text-xs text-[#888]">Uploaded</p>
                     </div>
                   </div>
-                  <button onClick={() => setResumeUploaded(false)} className="text-xs text-red-500 hover:underline">Remove</button>
+                  <button
+                    onClick={handleDeleteResume}
+                    disabled={uploadingResume}
+                    className="text-xs text-red-500 hover:underline disabled:opacity-50"
+                  >
+                    {uploadingResume ? "Deleting..." : "Remove"}
+                  </button>
                 </div>
               )}
             </div>

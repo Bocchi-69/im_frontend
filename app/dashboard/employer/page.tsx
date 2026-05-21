@@ -1,7 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { isAuthenticated, logout, getMe } from "@/lib/authService";
+import { employerApi, EmployerProfile, Candidate } from "@/lib/employerApi";
 
 const NAV_ITEMS = [
   {
@@ -52,41 +55,192 @@ const NAV_ITEMS = [
   },
 ];
 
-const CANDIDATES = [
-  { name: "Maria Santos", role: "UI/UX Designer", location: "Manila, PH", pay: "₱45,000/mo", skills: ["Figma", "Tailwind", "React"], available: true },
-  { name: "Kevin Tan", role: "Backend Developer", location: "Cebu, PH", pay: "₱60,000/mo", skills: ["Laravel", "MySQL", "Docker"], available: true },
-  { name: "Rina Cruz", role: "Data Analyst", location: "Remote", pay: "₱40,000/mo", skills: ["Python", "SQL", "Tableau"], available: false },
-  { name: "Liam Reyes", role: "Mobile Developer", location: "Davao, PH", pay: "₱55,000/mo", skills: ["Flutter", "Firebase", "Dart"], available: true },
-];
-
-const SHORTLISTED = [
-  { name: "Maria Santos", role: "UI/UX Designer", note: "Strong portfolio, schedule interview" },
-  { name: "Kevin Tan", role: "Backend Developer", note: "Matches Laravel stack perfectly" },
-];
-
+// Mock messages (we'll implement this later)
 const MESSAGES = [
   { to: "Maria Santos", preview: "Hi Maria, we'd love to schedule a quick call...", time: "1h ago", unread: true },
   { to: "Kevin Tan", preview: "Thanks for your interest! We reviewed your resume...", time: "2d ago", unread: false },
 ];
 
 export default function EmployerDashboard() {
+  const router = useRouter();
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // NEW: State for user data and profile data
+  // ──────────────────────────────────────────────────────────────────────────
+  const [user, setUser] = useState<any>(null);
+  const [profile, setProfile] = useState<EmployerProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // NEW: State for candidates list
+  // ──────────────────────────────────────────────────────────────────────────
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [loadingCandidates, setLoadingCandidates] = useState(false);
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // NEW: State for company profile form
+  // ──────────────────────────────────────────────────────────────────────────
+  const [companyForm, setCompanyForm] = useState({
+    company_name: "",
+    industry: "",
+    company_size: "",
+    website: "",
+    location: "",
+    about: "",
+  });
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileMessage, setProfileMessage] = useState("");
+
   const [activeTab, setActiveTab] = useState("overview");
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [shortlisted, setShortlisted] = useState<string[]>(["Maria Santos", "Kevin Tan"]);
+  const [shortlisted, setShortlisted] = useState<number[]>([]);
   const [filterRole, setFilterRole] = useState("");
 
-  const toggleShortlist = (name: string) => {
+  // ──────────────────────────────────────────────────────────────────────────
+  // NEW: Load user data and profile on mount
+  // ──────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!isAuthenticated()) {
+      router.replace("/login");
+      return;
+    }
+
+    const fetchData = async () => {
+      try {
+        // Fetch user data
+        const userData = await getMe();
+        setUser(userData.user);
+
+        // Fetch employer profile data
+        const profileData = await employerApi.getProfile();
+        setProfile(profileData.profile);
+
+        // Populate form with existing profile data
+        setCompanyForm({
+          company_name: profileData.profile.company_name || "",
+          industry: profileData.profile.industry || "",
+          company_size: profileData.profile.company_size || "",
+          website: profileData.profile.website || "",
+          location: profileData.profile.location || "",
+          about: profileData.profile.about || "",
+        });
+      } catch (error) {
+        console.error("Failed to fetch data:", error);
+        router.replace("/login");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [router]);
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // NEW: Load candidates when Browse tab is opened
+  // ──────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (activeTab === "browse" && candidates.length === 0) {
+      const fetchCandidates = async () => {
+        setLoadingCandidates(true);
+        try {
+          const data = await employerApi.getCandidates();
+          setCandidates(data.candidates);
+        } catch (error) {
+          console.error("Failed to fetch candidates:", error);
+        } finally {
+          setLoadingCandidates(false);
+        }
+      };
+
+      fetchCandidates();
+    }
+  }, [activeTab, candidates.length]);
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // NEW: Handle logout
+  // ──────────────────────────────────────────────────────────────────────────
+  const handleLogout = async () => {
+    try {
+      await logout();
+      router.push("/login");
+    } catch (error) {
+      console.error("Logout failed:", error);
+      localStorage.removeItem("auth_token");
+      router.push("/login");
+    }
+  };
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // NEW: Handle company profile form submission
+  // ──────────────────────────────────────────────────────────────────────────
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingProfile(true);
+    setProfileMessage("");
+
+    try {
+      const result = await employerApi.updateProfile(companyForm);
+      setProfile(result.profile);
+      setProfileMessage("Profile saved successfully!");
+
+      // Clear success message after 3 seconds
+      setTimeout(() => setProfileMessage(""), 3000);
+    } catch (error: any) {
+      setProfileMessage(error.response?.data?.message || "Failed to save profile");
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const toggleShortlist = (id: number) => {
     setShortlisted((prev) =>
-      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]
+      prev.includes(id) ? prev.filter((n) => n !== id) : [...prev, id]
     );
   };
 
-  const filtered = CANDIDATES.filter(
+  // ──────────────────────────────────────────────────────────────────────────
+  // NEW: Filter candidates by role or skills
+  // ──────────────────────────────────────────────────────────────────────────
+  const filtered = candidates.filter(
     (c) =>
       filterRole === "" ||
-      c.role.toLowerCase().includes(filterRole.toLowerCase()) ||
-      c.skills.some((s) => s.toLowerCase().includes(filterRole.toLowerCase()))
+      c.job_title?.toLowerCase().includes(filterRole.toLowerCase()) ||
+      c.location?.toLowerCase().includes(filterRole.toLowerCase())
   );
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // NEW: Get shortlisted candidates
+  // ──────────────────────────────────────────────────────────────────────────
+  const shortlistedCandidates = candidates.filter((c) => shortlisted.includes(c.id));
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // NEW: Get company initials for avatar
+  // ──────────────────────────────────────────────────────────────────────────
+  const getCompanyInitials = () => {
+    if (companyForm.company_name) {
+      return companyForm.company_name
+        .split(" ")
+        .map((w) => w[0])
+        .slice(0, 2)
+        .join("")
+        .toUpperCase();
+    }
+    return user?.name?.split(" ").map((n: string) => n[0]).join("").toUpperCase() || "AC";
+  };
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // NEW: Show loading spinner while fetching data
+  // ──────────────────────────────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#FAFAF8] flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-[#E8742A] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-sm text-[#888]">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#FAFAF8] flex flex-col font-sans">
@@ -111,8 +265,9 @@ export default function EmployerDashboard() {
             </svg>
             <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-[#E8742A] rounded-full" />
           </button>
+          {/* UPDATED: Show company initials */}
           <div className="w-8 h-8 rounded-full bg-[#E8742A] text-white text-xs font-semibold flex items-center justify-center">
-            AC
+            {getCompanyInitials()}
           </div>
         </div>
       </header>
@@ -146,15 +301,17 @@ export default function EmployerDashboard() {
             ))}
           </nav>
           <div className="px-3 py-4 border-t border-[#E5E3DC]">
-            <Link
-              href="/login"
+            <button
+              onClick={handleLogout}
               className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-[#888] hover:bg-red-50 hover:text-red-500 transition-all"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" />
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" y1="12" x2="9" y2="12" />
               </svg>
               Log out
-            </Link>
+            </button>
           </div>
         </aside>
 
@@ -166,12 +323,15 @@ export default function EmployerDashboard() {
           {/* OVERVIEW */}
           {activeTab === "overview" && (
             <div>
-              <h1 className="text-xl font-bold text-[#1A1A1A] mb-1">Welcome, Acme Corp 👋</h1>
+              {/* UPDATED: Show real company name or user name */}
+              <h1 className="text-xl font-bold text-[#1A1A1A] mb-1">
+                Welcome, {companyForm.company_name || user?.name || "there"} 👋
+              </h1>
               <p className="text-sm text-[#888] mb-8">Here's a snapshot of your hiring activity.</p>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
                 {[
-                  { label: "Resumes Viewed", value: "28", change: "+6 this week" },
+                  { label: "Resumes Viewed", value: candidates.length.toString(), change: `${candidates.filter(c => c.has_resume).length} with resume` },
                   { label: "Shortlisted", value: shortlisted.length.toString(), change: "Candidates saved" },
                   { label: "Messages Sent", value: "5", change: "2 replies" },
                   { label: "Active Roles", value: "3", change: "Hiring now" },
@@ -190,24 +350,28 @@ export default function EmployerDashboard() {
                   <h2 className="text-sm font-semibold text-[#1A1A1A]">Shortlisted Candidates</h2>
                   <button onClick={() => setActiveTab("shortlisted")} className="text-xs text-[#4A6CF7] hover:underline">View all</button>
                 </div>
-                <div className="flex flex-col gap-3">
-                  {SHORTLISTED.map((c) => (
-                    <div key={c.name} className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-[#F0EFE8] text-xs font-semibold flex items-center justify-center text-[#555]">
-                          {c.name.split(" ").map((w) => w[0]).join("")}
+                {shortlistedCandidates.length === 0 ? (
+                  <p className="text-sm text-[#888] py-4 text-center">No candidates shortlisted yet</p>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    {shortlistedCandidates.slice(0, 3).map((c) => (
+                      <div key={c.id} className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-[#F0EFE8] text-xs font-semibold flex items-center justify-center text-[#555]">
+                            {c.name.split(" ").map((w) => w[0]).join("")}
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-[#1A1A1A]">{c.name}</p>
+                            <p className="text-xs text-[#888]">{c.job_title || "No job title"}</p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="text-sm font-medium text-[#1A1A1A]">{c.name}</p>
-                          <p className="text-xs text-[#888]">{c.role}</p>
-                        </div>
+                        <button onClick={() => setActiveTab("messages")} className="text-xs font-medium text-[#4A6CF7] border border-[#CCCBC4] px-3 py-1 rounded-full hover:border-[#4A6CF7] transition-colors">
+                          Message
+                        </button>
                       </div>
-                      <button onClick={() => setActiveTab("messages")} className="text-xs font-medium text-[#4A6CF7] border border-[#CCCBC4] px-3 py-1 rounded-full hover:border-[#4A6CF7] transition-colors">
-                        Message
-                      </button>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Browse CTA */}
@@ -223,7 +387,7 @@ export default function EmployerDashboard() {
             </div>
           )}
 
-          {/* BROWSE TALENT */}
+          {/* BROWSE TALENT - UPDATED with real candidates */}
           {activeTab === "browse" && (
             <div>
               <h1 className="text-xl font-bold text-[#1A1A1A] mb-1">Browse Talent</h1>
@@ -236,62 +400,67 @@ export default function EmployerDashboard() {
                 </svg>
                 <input
                   type="text"
-                  placeholder="Search by role or skill..."
+                  placeholder="Search by role or location..."
                   value={filterRole}
                   onChange={(e) => setFilterRole(e.target.value)}
                   className="w-full border border-[#CCCBC4] rounded-xl pl-9 pr-4 py-2.5 text-sm text-[#1A1A1A] outline-none focus:border-[#4A6CF7] focus:ring-2 focus:ring-[#4A6CF7]/10 bg-white placeholder:text-[#BBB]"
                 />
               </div>
 
-              <div className="grid sm:grid-cols-2 gap-4">
-                {filtered.map((c) => (
-                  <div key={c.name} className="bg-white border border-[#E5E3DC] rounded-2xl p-5 flex flex-col gap-3">
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-[#F0EFE8] text-sm font-semibold text-[#555] flex items-center justify-center">
-                          {c.name.split(" ").map((w) => w[0]).join("")}
+              {loadingCandidates ? (
+                <div className="text-center py-12">
+                  <div className="w-8 h-8 border-2 border-[#E8742A] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                  <p className="text-sm text-[#888]">Loading candidates...</p>
+                </div>
+              ) : (
+                <div className="grid sm:grid-cols-2 gap-4">
+                  {filtered.map((c) => (
+                    <div key={c.id} className="bg-white border border-[#E5E3DC] rounded-2xl p-5 flex flex-col gap-3">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-[#F0EFE8] text-sm font-semibold text-[#555] flex items-center justify-center">
+                            {c.name.split(" ").map((w) => w[0]).join("")}
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold text-[#1A1A1A]">{c.name}</p>
+                            <p className="text-xs text-[#888]">{c.job_title || "No job title"} · {c.location || "No location"}</p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="text-sm font-semibold text-[#1A1A1A]">{c.name}</p>
-                          <p className="text-xs text-[#888]">{c.role} · {c.location}</p>
+                        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${c.has_resume ? "bg-green-50 text-green-700" : "bg-[#F0EFE8] text-[#888]"}`}>
+                          {c.has_resume ? "Has resume" : "No resume"}
+                        </span>
+                      </div>
+                      {c.bio && (
+                        <p className="text-xs text-[#666] line-clamp-2">{c.bio}</p>
+                      )}
+                      <div className="flex items-center justify-between mt-1">
+                        <p className="text-sm font-semibold text-[#1A1A1A]">{c.expected_pay || "Pay not specified"}</p>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => toggleShortlist(c.id)}
+                            className={`p-2 rounded-lg border transition-all ${shortlisted.includes(c.id) ? "border-red-200 bg-red-50 text-red-400" : "border-[#CCCBC4] text-[#AAA] hover:border-[#999]"}`}
+                            aria-label="Shortlist"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill={shortlisted.includes(c.id) ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2">
+                              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+                            </svg>
+                          </button>
+                          <button onClick={() => setActiveTab("messages")} className="text-xs font-medium bg-[#1A1A1A] text-white px-3 py-1.5 rounded-lg hover:bg-[#333] transition-colors">
+                            Message
+                          </button>
                         </div>
                       </div>
-                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${c.available ? "bg-green-50 text-green-700" : "bg-[#F0EFE8] text-[#888]"}`}>
-                        {c.available ? "Available" : "Not available"}
-                      </span>
                     </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {c.skills.map((s) => (
-                        <span key={s} className="text-xs bg-[#F0EFE8] text-[#555] px-2.5 py-1 rounded-full">{s}</span>
-                      ))}
-                    </div>
-                    <div className="flex items-center justify-between mt-1">
-                      <p className="text-sm font-semibold text-[#1A1A1A]">{c.pay}</p>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => toggleShortlist(c.name)}
-                          className={`p-2 rounded-lg border transition-all ${shortlisted.includes(c.name) ? "border-red-200 bg-red-50 text-red-400" : "border-[#CCCBC4] text-[#AAA] hover:border-[#999]"}`}
-                          aria-label="Shortlist"
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill={shortlisted.includes(c.name) ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2">
-                            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
-                          </svg>
-                        </button>
-                        <button onClick={() => setActiveTab("messages")} className="text-xs font-medium bg-[#1A1A1A] text-white px-3 py-1.5 rounded-lg hover:bg-[#333] transition-colors">
-                          Message
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-                {filtered.length === 0 && (
-                  <p className="text-sm text-[#888] col-span-2 py-12 text-center">No candidates match your search.</p>
-                )}
-              </div>
+                  ))}
+                  {filtered.length === 0 && !loadingCandidates && (
+                    <p className="text-sm text-[#888] col-span-2 py-12 text-center">No candidates match your search.</p>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
-          {/* SHORTLISTED */}
+          {/* SHORTLISTED - UPDATED with real shortlisted candidates */}
           {activeTab === "shortlisted" && (
             <div className="max-w-xl">
               <h1 className="text-xl font-bold text-[#1A1A1A] mb-1">Shortlisted</h1>
@@ -304,22 +473,22 @@ export default function EmployerDashboard() {
                 </div>
               ) : (
                 <div className="flex flex-col gap-3">
-                  {CANDIDATES.filter((c) => shortlisted.includes(c.name)).map((c) => (
-                    <div key={c.name} className="bg-white border border-[#E5E3DC] rounded-2xl p-5 flex items-center justify-between gap-4">
+                  {shortlistedCandidates.map((c) => (
+                    <div key={c.id} className="bg-white border border-[#E5E3DC] rounded-2xl p-5 flex items-center justify-between gap-4">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-full bg-[#F0EFE8] text-sm font-semibold text-[#555] flex items-center justify-center">
                           {c.name.split(" ").map((w) => w[0]).join("")}
                         </div>
                         <div>
                           <p className="text-sm font-semibold text-[#1A1A1A]">{c.name}</p>
-                          <p className="text-xs text-[#888]">{c.role} · {c.pay}</p>
+                          <p className="text-xs text-[#888]">{c.job_title || "No job title"} · {c.expected_pay || "Pay not specified"}</p>
                         </div>
                       </div>
                       <div className="flex gap-2">
                         <button onClick={() => setActiveTab("messages")} className="text-xs font-medium bg-[#1A1A1A] text-white px-3 py-1.5 rounded-lg hover:bg-[#333] transition-colors">
                           Message
                         </button>
-                        <button onClick={() => toggleShortlist(c.name)} className="text-xs font-medium text-red-500 border border-red-200 px-3 py-1.5 rounded-lg hover:bg-red-50 transition-colors">
+                        <button onClick={() => toggleShortlist(c.id)} className="text-xs font-medium text-red-500 border border-red-200 px-3 py-1.5 rounded-lg hover:bg-red-50 transition-colors">
                           Remove
                         </button>
                       </div>
@@ -359,51 +528,111 @@ export default function EmployerDashboard() {
             </div>
           )}
 
-          {/* COMPANY PROFILE */}
+          {/* COMPANY PROFILE - UPDATED with real form handling */}
           {activeTab === "company" && (
             <div className="max-w-xl">
               <h1 className="text-xl font-bold text-[#1A1A1A] mb-1">Company Profile</h1>
               <p className="text-sm text-[#888] mb-8">Candidates will see this when you reach out to them.</p>
 
-              <div className="bg-white border border-[#E5E3DC] rounded-2xl p-6 flex flex-col gap-5">
+              <form onSubmit={handleSaveProfile} className="bg-white border border-[#E5E3DC] rounded-2xl p-6 flex flex-col gap-5">
                 <div className="flex items-center gap-4">
-                  <div className="w-14 h-14 rounded-2xl bg-[#E8742A] text-white text-lg font-bold flex items-center justify-center">AC</div>
+                  <div className="w-14 h-14 rounded-2xl bg-[#E8742A] text-white text-lg font-bold flex items-center justify-center">
+                    {getCompanyInitials()}
+                  </div>
                   <div>
-                    <p className="text-sm font-semibold text-[#1A1A1A]">Acme Corp</p>
-                    <p className="text-xs text-[#888]">Tech Company · Cebu, PH</p>
+                    <p className="text-sm font-semibold text-[#1A1A1A]">{companyForm.company_name || user?.name || "Your Company"}</p>
+                    <p className="text-xs text-[#888]">{companyForm.industry || "Add industry"} · {companyForm.location || "Add location"}</p>
                   </div>
                 </div>
 
-                {[
-                  { label: "Company Name", placeholder: "Acme Corp", type: "text" },
-                  { label: "Industry", placeholder: "e.g. Technology, Finance", type: "text" },
-                  { label: "Company Size", placeholder: "e.g. 10–50 employees", type: "text" },
-                  { label: "Website", placeholder: "https://acme.com", type: "url" },
-                  { label: "Location", placeholder: "e.g. Cebu, Philippines", type: "text" },
-                ].map((f) => (
-                  <div key={f.label} className="flex flex-col gap-1.5">
-                    <label className="text-xs font-medium text-[#444]">{f.label}</label>
-                    <input
-                      type={f.type}
-                      placeholder={f.placeholder}
-                      className="border border-[#CCCBC4] rounded-xl px-4 py-2.5 text-sm text-[#1A1A1A] outline-none focus:border-[#4A6CF7] focus:ring-2 focus:ring-[#4A6CF7]/10 bg-white transition-all placeholder:text-[#BBB]"
-                    />
-                  </div>
-                ))}
+                {/* Company Name */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-[#444]">Company Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Acme Corp"
+                    value={companyForm.company_name}
+                    onChange={(e) => setCompanyForm({ ...companyForm, company_name: e.target.value })}
+                    className="border border-[#CCCBC4] rounded-xl px-4 py-2.5 text-sm text-[#1A1A1A] outline-none focus:border-[#4A6CF7] focus:ring-2 focus:ring-[#4A6CF7]/10 bg-white transition-all placeholder:text-[#BBB]"
+                  />
+                </div>
 
+                {/* Industry */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-[#444]">Industry</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Technology, Finance"
+                    value={companyForm.industry}
+                    onChange={(e) => setCompanyForm({ ...companyForm, industry: e.target.value })}
+                    className="border border-[#CCCBC4] rounded-xl px-4 py-2.5 text-sm text-[#1A1A1A] outline-none focus:border-[#4A6CF7] focus:ring-2 focus:ring-[#4A6CF7]/10 bg-white transition-all placeholder:text-[#BBB]"
+                  />
+                </div>
+
+                {/* Company Size */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-[#444]">Company Size</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 10–50 employees"
+                    value={companyForm.company_size}
+                    onChange={(e) => setCompanyForm({ ...companyForm, company_size: e.target.value })}
+                    className="border border-[#CCCBC4] rounded-xl px-4 py-2.5 text-sm text-[#1A1A1A] outline-none focus:border-[#4A6CF7] focus:ring-2 focus:ring-[#4A6CF7]/10 bg-white transition-all placeholder:text-[#BBB]"
+                  />
+                </div>
+
+                {/* Website */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-[#444]">Website</label>
+                  <input
+                    type="url"
+                    placeholder="https://acme.com"
+                    value={companyForm.website}
+                    onChange={(e) => setCompanyForm({ ...companyForm, website: e.target.value })}
+                    className="border border-[#CCCBC4] rounded-xl px-4 py-2.5 text-sm text-[#1A1A1A] outline-none focus:border-[#4A6CF7] focus:ring-2 focus:ring-[#4A6CF7]/10 bg-white transition-all placeholder:text-[#BBB]"
+                  />
+                </div>
+
+                {/* Location */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-[#444]">Location</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Cebu, Philippines"
+                    value={companyForm.location}
+                    onChange={(e) => setCompanyForm({ ...companyForm, location: e.target.value })}
+                    className="border border-[#CCCBC4] rounded-xl px-4 py-2.5 text-sm text-[#1A1A1A] outline-none focus:border-[#4A6CF7] focus:ring-2 focus:ring-[#4A6CF7]/10 bg-white transition-all placeholder:text-[#BBB]"
+                  />
+                </div>
+
+                {/* About */}
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-[#444]">About</label>
                   <textarea
                     rows={3}
                     placeholder="What does your company do? What kind of talent are you looking for?"
+                    value={companyForm.about}
+                    onChange={(e) => setCompanyForm({ ...companyForm, about: e.target.value })}
                     className="border border-[#CCCBC4] rounded-xl px-4 py-2.5 text-sm text-[#1A1A1A] outline-none focus:border-[#4A6CF7] focus:ring-2 focus:ring-[#4A6CF7]/10 bg-white transition-all placeholder:text-[#BBB] resize-none"
                   />
                 </div>
 
-                <button className="w-full bg-[#1A1A1A] text-white py-2.5 rounded-xl text-sm font-medium hover:bg-[#333] transition-colors">
-                  Save changes
+                {/* Success/Error message */}
+                {profileMessage && (
+                  <div className={`text-xs rounded-xl px-4 py-3 ${profileMessage.includes("success") ? "bg-green-50 border border-green-200 text-green-600" : "bg-red-50 border border-red-200 text-red-600"}`}>
+                    {profileMessage}
+                  </div>
+                )}
+
+                {/* Submit button */}
+                <button
+                  type="submit"
+                  disabled={savingProfile}
+                  className="w-full bg-[#1A1A1A] text-white py-2.5 rounded-xl text-sm font-medium hover:bg-[#333] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {savingProfile ? "Saving..." : "Save changes"}
                 </button>
-              </div>
+              </form>
             </div>
           )}
 

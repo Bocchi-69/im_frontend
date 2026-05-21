@@ -21,9 +21,18 @@ export default function LoginPage() {
     try {
       const result = await login({ email, password });
       // Redirect based on role
-      router.push(result.user.role === "candidate" ? "/dashboard/candidate" : "/dashboard/employer");
+      router.push(
+      result.user.role === "candidate"
+        ? "/dashboard/candidate"
+        : "/dashboard/employer"
+      );
     } catch (err: any) {
-      setError(err.message ?? "Invalid credentials. Please try again.");
+      // Error is handled below - no need to log to console in production
+      setError(
+        err.response?.data?.message || 
+        err.message || 
+        "Invalid credentials. Please try again."
+      );
     } finally {
       setLoading(false);
     }
