@@ -8,13 +8,25 @@ export interface CandidateProfile {
   expected_pay: string | null;
   bio: string | null;
   resume_path: string | null;
+  profile_views: number;
+  profile_views_this_week: number;
   created_at: string;
   updated_at: string;
 }
 
+export interface CandidateStats {
+  profile_views: number;
+  profile_views_change: string;
+  total_applications: number;
+  pending_applications: number;
+  available_jobs: number;
+  unread_messages: number;
+  total_messages: number;
+}
+
 export const candidateApi = {
   // Get candidate profile
-  getProfile: async (): Promise<{ profile: CandidateProfile }> => {
+  getProfile: async (): Promise<{ profile: CandidateProfile; stats?: CandidateStats }> => {
     const response = await api.get("/candidate/profile");
     return response.data;
   },
@@ -34,11 +46,8 @@ export const candidateApi = {
   uploadResume: async (file: File): Promise<{ message: string; resume_path: string; resume_url: string }> => {
     const formData = new FormData();
     formData.append("resume", file);
-
     const response = await api.post("/candidate/resume", formData, {
-      headers: {
-        "Content-Type": "multipart/form-data",
-      },
+      headers: { "Content-Type": "multipart/form-data" },
     });
     return response.data;
   },

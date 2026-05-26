@@ -4,7 +4,11 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { isAuthenticated, logout, getMe } from "@/lib/authService";
-import { candidateApi, CandidateProfile } from "@/lib/candidateApi";
+import { candidateApi, CandidateProfile, CandidateStats } from "@/lib/candidateApi";
+import { jobApi, JobPost } from "@/lib/jobApi";
+import MessagesTab from "@/components/MessagesTab";
+import NotificationDropdown from "@/components/NotificationDropdown";
+import AvatarUpload from "@/components/AvatarUpload";
 
 const NAV_ITEMS = [
   {
@@ -37,8 +41,17 @@ const NAV_ITEMS = [
     ),
   },
   {
+    id: "jobs",
+    label: "Browse Jobs",
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+        <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+      </svg>
+    ),
+  },
+  {
     id: "applications",
-    label: "Applications",
+    label: "My Applications",
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
         <polyline points="9 11 12 14 22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
@@ -56,15 +69,8 @@ const NAV_ITEMS = [
   },
 ];
 
-const APPLICATIONS = [
-  { company: "Acme Corp", role: "Frontend Developer", status: "Viewed", date: "Apr 28", statusColor: "text-[#4A6CF7] bg-[#EEF0FF]" },
-  { company: "Bright Labs", role: "React Engineer", status: "Shortlisted", date: "Apr 25", statusColor: "text-green-700 bg-green-50" },
-  { company: "Nova Systems", role: "UI Engineer", status: "Pending", date: "Apr 20", statusColor: "text-[#888] bg-[#F0EFE8]" },
-  { company: "Drift Co.", role: "Full Stack Dev", status: "Rejected", date: "Apr 15", statusColor: "text-red-500 bg-red-50" },
-];
-
 const MESSAGES = [
-  { from: "Bright Labs HR", preview: "Hi Juan, we'd love to schedule a quick call...", time: "2h ago", unread: true },
+  { from: "Bright Labs HR", preview: "Hi, we'd love to schedule a quick call...", time: "2h ago", unread: true },
   { from: "Acme Corp Recruiter", preview: "Thanks for applying! We reviewed your resume...", time: "1d ago", unread: false },
   { from: "Nova Systems", preview: "We noticed your profile and think you'd be...", time: "3d ago", unread: false },
 ];
@@ -72,16 +78,20 @@ const MESSAGES = [
 export default function CandidateDashboard() {
   const router = useRouter();
   
-  // ──────────────────────────────────────────────────────────────────────────
-  // NEW: State for user data and profile data
-  // ──────────────────────────────────────────────────────────────────────────
   const [user, setUser] = useState<any>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [profile, setProfile] = useState<CandidateProfile | null>(null);
+  const [stats, setStats] = useState<CandidateStats>({
+    profile_views: 0,
+    profile_views_change: "+0 this week",
+    total_applications: 0,
+    pending_applications: 0,
+    available_jobs: 0,
+    unread_messages: 0,
+    total_messages: 0,
+  });
   const [loading, setLoading] = useState(true);
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // NEW: State for profile form
-  // ──────────────────────────────────────────────────────────────────────────
   const [profileForm, setProfileForm] = useState({
     job_title: "",
     location: "",
@@ -91,19 +101,23 @@ export default function CandidateDashboard() {
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileMessage, setProfileMessage] = useState("");
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // NEW: State for resume upload
-  // ──────────────────────────────────────────────────────────────────────────
   const [uploadingResume, setUploadingResume] = useState(false);
   const [resumeMessage, setResumeMessage] = useState("");
+
+  const [jobs, setJobs] = useState<JobPost[]>([]);
+  const [loadingJobs, setLoadingJobs] = useState(false);
+  const [selectedJob, setSelectedJob] = useState<JobPost | null>(null);
+  const [coverLetter, setCoverLetter] = useState("");
+  const [applying, setApplying] = useState(false);
+  const [applyMessage, setApplyMessage] = useState("");
+
+  const [myApplications, setMyApplications] = useState<any[]>([]);
+  const [loadingApplications, setLoadingApplications] = useState(false);
 
   const [activeTab, setActiveTab] = useState("overview");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // NEW: Load user data and profile on mount
-  // ──────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!isAuthenticated()) {
       router.replace("/login");
@@ -112,15 +126,16 @@ export default function CandidateDashboard() {
 
     const fetchData = async () => {
       try {
-        // Fetch user data
         const userData = await getMe();
         setUser(userData.user);
+        setAvatarUrl(userData.user.avatar_url || null);
 
-        // Fetch profile data
         const profileData = await candidateApi.getProfile();
         setProfile(profileData.profile);
+        if (profileData.stats) {
+          setStats(profileData.stats);
+        }
 
-        // Populate form with existing profile data
         setProfileForm({
           job_title: profileData.profile.job_title || "",
           location: profileData.profile.location || "",
@@ -138,9 +153,42 @@ export default function CandidateDashboard() {
     fetchData();
   }, [router]);
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // NEW: Handle logout
-  // ──────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (activeTab === "jobs") {
+      loadJobs();
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab === "applications") {
+      loadApplications();
+    }
+  }, [activeTab]);
+
+  const loadJobs = async () => {
+    setLoadingJobs(true);
+    try {
+      const data = await jobApi.getCandidateJobs();
+      setJobs(data.jobs);
+    } catch (error) {
+      console.error("Failed to fetch jobs:", error);
+    } finally {
+      setLoadingJobs(false);
+    }
+  };
+
+  const loadApplications = async () => {
+    setLoadingApplications(true);
+    try {
+      const data = await jobApi.getMyApplications();
+      setMyApplications(data.applications);
+    } catch (error) {
+      console.error("Failed to fetch applications:", error);
+    } finally {
+      setLoadingApplications(false);
+    }
+  };
+
   const handleLogout = async () => {
     try {
       await logout();
@@ -152,9 +200,6 @@ export default function CandidateDashboard() {
     }
   };
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // NEW: Handle profile form submission
-  // ──────────────────────────────────────────────────────────────────────────
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setSavingProfile(true);
@@ -164,8 +209,6 @@ export default function CandidateDashboard() {
       const result = await candidateApi.updateProfile(profileForm);
       setProfile(result.profile);
       setProfileMessage("Profile saved successfully!");
-      
-      // Clear success message after 3 seconds
       setTimeout(() => setProfileMessage(""), 3000);
     } catch (error: any) {
       setProfileMessage(error.response?.data?.message || "Failed to save profile");
@@ -174,20 +217,15 @@ export default function CandidateDashboard() {
     }
   };
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // NEW: Handle resume file upload
-  // ──────────────────────────────────────────────────────────────────────────
   const handleFileUpload = async (file: File) => {
     if (!file) return;
 
-    // Validate file type
     const allowedTypes = ["application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
     if (!allowedTypes.includes(file.type)) {
       setResumeMessage("Please upload a PDF or Word document");
       return;
     }
 
-    // Validate file size (5MB)
     if (file.size > 5 * 1024 * 1024) {
       setResumeMessage("File size must be less than 5MB");
       return;
@@ -198,10 +236,7 @@ export default function CandidateDashboard() {
 
     try {
       const result = await candidateApi.uploadResume(file);
-      
-      // Update profile with new resume path
       setProfile((prev) => prev ? { ...prev, resume_path: result.resume_path } : null);
-      
       setResumeMessage("Resume uploaded successfully!");
       setTimeout(() => setResumeMessage(""), 3000);
     } catch (error: any) {
@@ -211,9 +246,6 @@ export default function CandidateDashboard() {
     }
   };
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // NEW: Handle resume deletion
-  // ──────────────────────────────────────────────────────────────────────────
   const handleDeleteResume = async () => {
     if (!confirm("Are you sure you want to delete your resume?")) return;
 
@@ -222,10 +254,7 @@ export default function CandidateDashboard() {
 
     try {
       await candidateApi.deleteResume();
-      
-      // Update profile to remove resume path
       setProfile((prev) => prev ? { ...prev, resume_path: null } : null);
-      
       setResumeMessage("Resume deleted successfully");
       setTimeout(() => setResumeMessage(""), 3000);
     } catch (error: any) {
@@ -235,9 +264,6 @@ export default function CandidateDashboard() {
     }
   };
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // NEW: Handle drag and drop
-  // ──────────────────────────────────────────────────────────────────────────
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragging(false);
@@ -248,9 +274,33 @@ export default function CandidateDashboard() {
     }
   };
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // NEW: Show loading spinner while fetching data
-  // ──────────────────────────────────────────────────────────────────────────
+  const handleApply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedJob) return;
+
+    setApplying(true);
+    setApplyMessage("");
+
+    try {
+      await jobApi.applyToJob(selectedJob.id, coverLetter);
+      setApplyMessage("Application submitted successfully!");
+      setCoverLetter("");
+      
+      setJobs(prev => prev.map(job => 
+        job.id === selectedJob.id ? { ...job, has_applied: true } : job
+      ));
+      
+      setTimeout(() => {
+        setApplyMessage("");
+        setSelectedJob(null);
+      }, 2000);
+    } catch (error: any) {
+      setApplyMessage(error.response?.data?.message || "Failed to submit application");
+    } finally {
+      setApplying(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#FAFAF8] flex items-center justify-center">
@@ -265,7 +315,6 @@ export default function CandidateDashboard() {
   return (
     <div className="min-h-screen bg-[#FAFAF8] flex flex-col font-sans">
 
-      {/* ── Top Navbar ── */}
       <header className="fixed top-0 inset-x-0 z-50 h-14 bg-white border-b border-[#E5E3DC] flex items-center justify-between px-4 sm:px-6">
         <div className="flex items-center gap-3">
           <button onClick={() => setSidebarOpen(!sidebarOpen)} className="sm:hidden p-2 rounded-lg hover:bg-[#F0EFE8] transition-colors">
@@ -278,29 +327,25 @@ export default function CandidateDashboard() {
           </Link>
         </div>
         <div className="flex items-center gap-3">
-          {/* Notification bell */}
-          <button className="relative p-2 rounded-lg hover:bg-[#F0EFE8] transition-colors">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#555" strokeWidth="1.8" strokeLinecap="round">
-              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" />
-            </svg>
-            <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-[#4A6CF7] rounded-full" />
-          </button>
-          {/* Avatar - UPDATED to show user initials */}
-          <div className="w-8 h-8 rounded-full bg-[#1A1A1A] text-white text-xs font-semibold flex items-center justify-center">
-            {user?.name?.split(" ").map((n: string) => n[0]).join("").toUpperCase() || "JD"}
-          </div>
+          <NotificationDropdown accentColor="#4A6CF7" />
+            {avatarUrl ? (
+              <img src={avatarUrl?.startsWith('http') ? avatarUrl : `http://localhost:8000${avatarUrl}`} alt={user?.name} className="w-8 h-8 rounded-full object-cover" />
+            ) : (
+              <div className="w-8 h-8 rounded-full bg-[#1A1A1A] text-white text-xs font-semibold flex items-center justify-center">
+                {user?.name?.split(" ").map((n: string) => n[0]).join("").toUpperCase() || "JD"}
+              </div>
+            )}
         </div>
       </header>
 
       <div className="flex pt-14 min-h-screen">
 
-        {/* ── Sidebar ── */}
         <aside className={`fixed sm:sticky top-14 z-40 h-[calc(100vh-3.5rem)] w-56 bg-white border-r border-[#E5E3DC] flex flex-col transition-transform duration-200 ${sidebarOpen ? "translate-x-0" : "-translate-x-full sm:translate-x-0"}`}>
           <nav className="flex-1 px-3 py-4 flex flex-col gap-0.5">
             {NAV_ITEMS.map((item) => (
               <button
                 key={item.id}
-                onClick={() => { setActiveTab(item.id); setSidebarOpen(false); }}
+                onClick={() => { setActiveTab(item.id); setSidebarOpen(false); setSelectedJob(null); }}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all text-left ${
                   activeTab === item.id
                     ? "bg-[#1A1A1A] text-white"
@@ -312,10 +357,14 @@ export default function CandidateDashboard() {
                 {item.id === "messages" && (
                   <span className="ml-auto w-2 h-2 rounded-full bg-[#4A6CF7]" />
                 )}
+                {item.id === "applications" && myApplications.length > 0 && (
+                  <span className="ml-auto text-xs font-semibold bg-[#F0EFE8] text-[#555] px-1.5 py-0.5 rounded-full">
+                    {myApplications.length}
+                  </span>
+                )}
               </button>
             ))}
           </nav>
-          {/* UPDATED: Changed Link to button with handleLogout */}
           <div className="px-3 py-4 border-t border-[#E5E3DC]">
             <button
               onClick={handleLogout}
@@ -329,26 +378,22 @@ export default function CandidateDashboard() {
           </div>
         </aside>
 
-        {/* Sidebar overlay for mobile */}
         {sidebarOpen && <div className="fixed inset-0 z-30 bg-black/20 sm:hidden" onClick={() => setSidebarOpen(false)} />}
 
-        {/* ── Main Content ── */}
         <main className="flex-1 px-4 sm:px-8 py-8 overflow-y-auto">
 
           {/* OVERVIEW */}
           {activeTab === "overview" && (
             <div>
-              {/* UPDATED: Show real user name */}
               <h1 className="text-xl font-bold text-[#1A1A1A] mb-1">Good morning, {user?.name?.split(" ")[0] || "there"} 👋</h1>
               <p className="text-sm text-[#888] mb-8">Here's what's happening with your job search.</p>
 
-              {/* Stats */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
                 {[
-                  { label: "Profile Views", value: "124", change: "+12 this week" },
-                  { label: "Applications", value: "4", change: "2 active" },
-                  { label: "Shortlisted", value: "1", change: "Bright Labs" },
-                  { label: "Messages", value: "3", change: "1 unread" },
+                  { label: "Profile Views", value: stats.profile_views.toString(), change: stats.profile_views_change },
+                  { label: "Applications", value: stats.total_applications.toString(), change: `${stats.pending_applications} pending` },
+                  { label: "Available Jobs", value: stats.available_jobs.toString(), change: "Browse now" },
+                  { label: "Messages", value: stats.total_messages.toString(), change: `${stats.unread_messages} unread` },
                 ].map((s) => (
                   <div key={s.label} className="bg-white border border-[#E5E3DC] rounded-2xl p-4">
                     <p className="text-xs text-[#888] mb-1">{s.label}</p>
@@ -358,27 +403,7 @@ export default function CandidateDashboard() {
                 ))}
               </div>
 
-              {/* Recent Applications */}
               <div className="bg-white border border-[#E5E3DC] rounded-2xl p-5 mb-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-sm font-semibold text-[#1A1A1A]">Recent Applications</h2>
-                  <button onClick={() => setActiveTab("applications")} className="text-xs text-[#4A6CF7] hover:underline">View all</button>
-                </div>
-                <div className="flex flex-col gap-3">
-                  {APPLICATIONS.slice(0, 3).map((a) => (
-                    <div key={a.company} className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-medium text-[#1A1A1A]">{a.role}</p>
-                        <p className="text-xs text-[#888]">{a.company} · {a.date}</p>
-                      </div>
-                      <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${a.statusColor}`}>{a.status}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Resume status - UPDATED to show real resume status */}
-              <div className="bg-white border border-[#E5E3DC] rounded-2xl p-5">
                 <div className="flex items-center justify-between mb-2">
                   <h2 className="text-sm font-semibold text-[#1A1A1A]">Resume Status</h2>
                   <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${profile?.resume_path ? "text-green-700 bg-green-50" : "text-amber-600 bg-amber-50"}`}>
@@ -392,28 +417,33 @@ export default function CandidateDashboard() {
                   </button>
                 )}
               </div>
+
+              <div className="bg-[#1A1A1A] rounded-2xl p-5 text-white flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold">Looking for your next opportunity?</p>
+                  <p className="text-xs text-white/60 mt-0.5">Browse {jobs.length} open positions from top companies.</p>
+                </div>
+                <button onClick={() => setActiveTab("jobs")} className="bg-white text-[#1A1A1A] text-xs font-semibold px-4 py-2 rounded-full hover:bg-[#F0EFE8] transition-colors whitespace-nowrap">
+                  Browse jobs
+                </button>
+              </div>
             </div>
           )}
 
-          {/* PROFILE - UPDATED with real form handling */}
+          {/* PROFILE */}
           {activeTab === "profile" && (
             <div className="max-w-xl">
               <h1 className="text-xl font-bold text-[#1A1A1A] mb-1">My Profile</h1>
               <p className="text-sm text-[#888] mb-8">This is what employers see when they view your profile.</p>
 
               <form onSubmit={handleSaveProfile} className="bg-white border border-[#E5E3DC] rounded-2xl p-6 flex flex-col gap-5">
-                {/* Avatar */}
-                <div className="flex items-center gap-4">
-                  <div className="w-14 h-14 rounded-full bg-[#1A1A1A] text-white text-lg font-bold flex items-center justify-center">
-                    {user?.name?.split(" ").map((n: string) => n[0]).join("").toUpperCase() || "JD"}
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-[#1A1A1A]">{user?.name}</p>
-                    <p className="text-xs text-[#888]">{profileForm.job_title || "Add job title"} · {profileForm.location || "Add location"}</p>
-                  </div>
-                </div>
+                <AvatarUpload
+                  currentAvatarUrl={avatarUrl}
+                  name={user?.name || ""}
+                  accentColor="#4A6CF7"
+                  onUpdate={setAvatarUrl}
+                />
 
-                {/* Full Name (read-only, from user account) */}
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-[#444]">Full Name</label>
                   <input
@@ -425,7 +455,6 @@ export default function CandidateDashboard() {
                   <p className="text-xs text-[#AAA]">Name can only be changed in account settings</p>
                 </div>
 
-                {/* Email (read-only, from user account) */}
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-[#444]">Email</label>
                   <input
@@ -436,7 +465,6 @@ export default function CandidateDashboard() {
                   />
                 </div>
 
-                {/* Job Title */}
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-[#444]">Job Title</label>
                   <input
@@ -448,7 +476,6 @@ export default function CandidateDashboard() {
                   />
                 </div>
 
-                {/* Location */}
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-[#444]">Location</label>
                   <input
@@ -460,7 +487,6 @@ export default function CandidateDashboard() {
                   />
                 </div>
 
-                {/* Expected Pay */}
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-[#444]">Expected Pay (monthly)</label>
                   <input
@@ -472,7 +498,6 @@ export default function CandidateDashboard() {
                   />
                 </div>
 
-                {/* Bio */}
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-[#444]">Bio</label>
                   <textarea
@@ -484,14 +509,12 @@ export default function CandidateDashboard() {
                   />
                 </div>
 
-                {/* Success/Error message */}
                 {profileMessage && (
                   <div className={`text-xs rounded-xl px-4 py-3 ${profileMessage.includes("success") ? "bg-green-50 border border-green-200 text-green-600" : "bg-red-50 border border-red-200 text-red-600"}`}>
                     {profileMessage}
                   </div>
                 )}
 
-                {/* Submit button */}
                 <button
                   type="submit"
                   disabled={savingProfile}
@@ -503,13 +526,12 @@ export default function CandidateDashboard() {
             </div>
           )}
 
-          {/* RESUME - UPDATED with real file upload */}
+          {/* RESUME */}
           {activeTab === "resume" && (
             <div className="max-w-xl">
               <h1 className="text-xl font-bold text-[#1A1A1A] mb-1">Resume</h1>
               <p className="text-sm text-[#888] mb-8">Upload your resume to get discovered by employers.</p>
 
-              {/* Success/Error message */}
               {resumeMessage && (
                 <div className={`mb-4 text-xs rounded-xl px-4 py-3 ${resumeMessage.includes("success") ? "bg-green-50 border border-green-200 text-green-600" : "bg-red-50 border border-red-200 text-red-600"}`}>
                   {resumeMessage}
@@ -571,54 +593,182 @@ export default function CandidateDashboard() {
             </div>
           )}
 
-          {/* APPLICATIONS */}
+          {/* BROWSE JOBS TAB */}
+          {activeTab === "jobs" && !selectedJob && (
+            <div>
+              <h1 className="text-xl font-bold text-[#1A1A1A] mb-1">Browse Jobs</h1>
+              <p className="text-sm text-[#888] mb-6">Find opportunities that match your skills and interests.</p>
+
+              {loadingJobs ? (
+                <div className="text-center py-12">
+                  <div className="w-8 h-8 border-2 border-[#4A6CF7] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                  <p className="text-sm text-[#888]">Loading jobs...</p>
+                </div>
+              ) : jobs.length === 0 ? (
+                <div className="text-center py-16 text-sm text-[#888]">
+                  <p>No job openings available at the moment. Check back soon!</p>
+                </div>
+              ) : (
+                <div className="grid gap-4">
+                  {jobs.map((job) => (
+                    <div key={job.id} className="bg-white border border-[#E5E3DC] rounded-2xl p-5">
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex-1">
+                          <h3 className="text-base font-semibold text-[#1A1A1A]">{job.title}</h3>
+                          <p className="text-sm text-[#666] mt-1">{job.company?.name}</p>
+                          <p className="text-xs text-[#888] mt-1">
+                            {job.location} · {job.job_type} · {job.salary_range}
+                          </p>
+                        </div>
+                        {job.has_applied ? (
+                          <span className="text-xs font-medium bg-green-50 text-green-700 px-3 py-1 rounded-full">
+                            Applied
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => setSelectedJob(job)}
+                            className="text-xs font-medium bg-[#4A6CF7] text-white px-4 py-2 rounded-lg hover:bg-[#3A5CE7] transition-colors"
+                          >
+                            Apply Now
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-sm text-[#666] mb-3 line-clamp-2">{job.description}</p>
+                      <p className="text-xs text-[#888]">Posted {job.posted_at} · {job.applications_count} applicants</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* JOB APPLICATION MODAL */}
+          {activeTab === "jobs" && selectedJob && (
+            <div>
+              <button
+                onClick={() => setSelectedJob(null)}
+                className="flex items-center gap-2 text-sm text-[#888] hover:text-[#1A1A1A] mb-6"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
+                </svg>
+                Back to jobs
+              </button>
+
+              <div className="bg-white border border-[#E5E3DC] rounded-2xl p-6 max-w-2xl">
+                <h2 className="text-xl font-bold text-[#1A1A1A] mb-2">{selectedJob.title}</h2>
+                <p className="text-sm text-[#666] mb-1">{selectedJob.company?.name}</p>
+                <p className="text-xs text-[#888] mb-6">
+                  {selectedJob.location} · {selectedJob.job_type} · {selectedJob.salary_range}
+                </p>
+
+                <div className="mb-6">
+                  <h3 className="text-sm font-semibold text-[#1A1A1A] mb-2">Description</h3>
+                  <p className="text-sm text-[#666] whitespace-pre-line">{selectedJob.description}</p>
+                </div>
+
+                {selectedJob.requirements && (
+                  <div className="mb-6">
+                    <h3 className="text-sm font-semibold text-[#1A1A1A] mb-2">Requirements</h3>
+                    <p className="text-sm text-[#666] whitespace-pre-line">{selectedJob.requirements}</p>
+                  </div>
+                )}
+
+                <form onSubmit={handleApply} className="border-t border-[#E5E3DC] pt-6">
+                  <h3 className="text-sm font-semibold text-[#1A1A1A] mb-4">Apply for this position</h3>
+                  
+                  <div className="mb-4">
+                    <label className="text-xs font-medium text-[#444]">Cover Letter (Optional)</label>
+                    <textarea
+                      rows={4}
+                      value={coverLetter}
+                      onChange={(e) => setCoverLetter(e.target.value)}
+                      placeholder="Tell the employer why you're a great fit for this role..."
+                      className="w-full border border-[#CCCBC4] rounded-xl px-4 py-2.5 text-sm text-[#1A1A1A] outline-none focus:border-[#4A6CF7] focus:ring-2 focus:ring-[#4A6CF7]/10 bg-white transition-all placeholder:text-[#BBB] resize-none mt-1.5"
+                    />
+                  </div>
+
+                  {applyMessage && (
+                    <div className={`mb-4 text-xs rounded-xl px-4 py-3 ${applyMessage.includes("success") ? "bg-green-50 border border-green-200 text-green-600" : "bg-red-50 border border-red-200 text-red-600"}`}>
+                      {applyMessage}
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={applying || !profile?.resume_path}
+                    className="w-full bg-[#4A6CF7] text-white py-2.5 rounded-xl text-sm font-medium hover:bg-[#3A5CE7] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {applying ? "Submitting..." : !profile?.resume_path ? "Upload resume first" : "Submit Application"}
+                  </button>
+                  
+                  {!profile?.resume_path && (
+                    <p className="text-xs text-[#888] text-center mt-2">
+                      You need to <button onClick={() => setActiveTab("resume")} className="text-[#4A6CF7] hover:underline">upload your resume</button> before applying.
+                    </p>
+                  )}
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* MY APPLICATIONS TAB */}
           {activeTab === "applications" && (
             <div>
-              <h1 className="text-xl font-bold text-[#1A1A1A] mb-1">Applications</h1>
-              <p className="text-sm text-[#888] mb-8">Track all the roles you've applied to.</p>
+              <h1 className="text-xl font-bold text-[#1A1A1A] mb-1">My Applications</h1>
+              <p className="text-sm text-[#888] mb-8">Track the status of your job applications.</p>
 
-              <div className="bg-white border border-[#E5E3DC] rounded-2xl overflow-hidden">
-                <div className="hidden sm:grid grid-cols-4 px-5 py-3 border-b border-[#E5E3DC] text-xs font-medium text-[#888] uppercase tracking-wide">
-                  <span>Role</span><span>Company</span><span>Date</span><span>Status</span>
+              {loadingApplications ? (
+                <div className="text-center py-12">
+                  <div className="w-8 h-8 border-2 border-[#4A6CF7] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                  <p className="text-sm text-[#888]">Loading applications...</p>
                 </div>
-                {APPLICATIONS.map((a, i) => (
-                  <div key={i} className={`grid sm:grid-cols-4 px-5 py-4 gap-1 sm:gap-0 items-start sm:items-center ${i !== APPLICATIONS.length - 1 ? "border-b border-[#F0EFE8]" : ""}`}>
-                    <p className="text-sm font-medium text-[#1A1A1A]">{a.role}</p>
-                    <p className="text-sm text-[#666]">{a.company}</p>
-                    <p className="text-xs text-[#888]">{a.date}</p>
-                    <span className={`text-xs font-medium px-2.5 py-1 rounded-full w-fit ${a.statusColor}`}>{a.status}</span>
-                  </div>
-                ))}
-              </div>
+              ) : myApplications.length === 0 ? (
+                <div className="text-center py-16 text-sm text-[#888]">
+                  <p>You haven't applied to any jobs yet.</p>
+                  <button onClick={() => setActiveTab("jobs")} className="mt-3 text-[#4A6CF7] hover:underline">Browse jobs →</button>
+                </div>
+              ) : (
+                <div className="grid gap-4">
+                  {myApplications.map((app) => (
+                    <div key={app.id} className="bg-white border border-[#E5E3DC] rounded-2xl p-5">
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex-1">
+                          <h3 className="text-base font-semibold text-[#1A1A1A]">{app.job.title}</h3>
+                          <p className="text-sm text-[#666] mt-1">{app.job.company}</p>
+                          <p className="text-xs text-[#888] mt-1">
+                            {app.job.location} · {app.job.salary_range}
+                          </p>
+                        </div>
+                        <span className={`text-xs font-medium px-3 py-1 rounded-full ${
+                          app.status === 'shortlisted' ? 'bg-green-50 text-green-700' :
+                          app.status === 'reviewed' ? 'bg-blue-50 text-blue-700' :
+                          app.status === 'rejected' ? 'bg-red-50 text-red-700' :
+                          'bg-[#F0EFE8] text-[#555]'
+                        }`}>
+                          {app.status.charAt(0).toUpperCase() + app.status.slice(1)}
+                        </span>
+                      </div>
+                      {app.cover_letter && (
+                        <div className="bg-[#FAFAF8] rounded-xl p-3 mb-3">
+                          <p className="text-xs font-medium text-[#444] mb-1">Your Cover Letter</p>
+                          <p className="text-xs text-[#666] line-clamp-2">{app.cover_letter}</p>
+                        </div>
+                      )}
+                      <p className="text-xs text-[#888]">Applied {app.applied_at}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
           {/* MESSAGES */}
           {activeTab === "messages" && (
-            <div className="max-w-xl">
+            <div>
               <h1 className="text-xl font-bold text-[#1A1A1A] mb-1">Messages</h1>
-              <p className="text-sm text-[#888] mb-8">Conversations from employers who reached out.</p>
-
-              <div className="bg-white border border-[#E5E3DC] rounded-2xl overflow-hidden flex flex-col">
-                {MESSAGES.map((m, i) => (
-                  <button
-                    key={i}
-                    className={`w-full flex items-start gap-4 px-5 py-4 text-left hover:bg-[#FAFAF8] transition-colors ${i !== MESSAGES.length - 1 ? "border-b border-[#F0EFE8]" : ""}`}
-                  >
-                    <div className="w-9 h-9 rounded-full bg-[#F0EFE8] text-[#555] text-xs font-semibold flex items-center justify-center flex-shrink-0">
-                      {m.from.split(" ").map((w) => w[0]).slice(0, 2).join("")}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between mb-0.5">
-                        <p className={`text-sm ${m.unread ? "font-semibold text-[#1A1A1A]" : "font-medium text-[#444]"}`}>{m.from}</p>
-                        <span className="text-xs text-[#AAA] flex-shrink-0 ml-2">{m.time}</span>
-                      </div>
-                      <p className="text-xs text-[#888] truncate">{m.preview}</p>
-                    </div>
-                    {m.unread && <span className="w-2 h-2 rounded-full bg-[#4A6CF7] flex-shrink-0 mt-1.5" />}
-                  </button>
-                ))}
-              </div>
+              <p className="text-sm text-[#888] mb-4">Conversations from employers who reached out.</p>
+              <MessagesTab currentUserId={user?.id} currentUserRole="candidate" />
             </div>
           )}
 
